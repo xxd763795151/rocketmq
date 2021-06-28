@@ -222,7 +222,9 @@ public class DefaultMessageStore implements MessageStore {
      */
     public void start() throws Exception {
 
+        // 默认lockFile 文件： System.getProperty("user.home") + File.separator + "store"/lock，实际看自己配置的storePathRootDir
         lock = lockFile.getChannel().tryLock(0, 1, false);
+        // 如果加锁失败或者请求锁失败或者是共享锁，标明已经被其它MQ进程锁定了，所以lock仅是为了标记是否当前进程独占这个目录
         if (lock == null || lock.isShared() || !lock.isValid()) {
             throw new RuntimeException("Lock failed,MQ already started");
         }
@@ -235,8 +237,15 @@ public class DefaultMessageStore implements MessageStore {
              * 2. DLedger committedPos may be missing, so the maxPhysicalPosInLogicQueue maybe bigger that maxOffset returned by DLedgerCommitLog, just let it go;
              * 3. Calculate the reput offset according to the consume queue;
              * 4. Make sure the fall-behind messages to be dispatched before starting the commitlog, especially when the broker role are automatically changed.
+             *
+             * 1. 通过commitlog的最大物理偏移（在commitlog中的偏移）确保在恢复的时候，截断快进的消息
+             * 2. DLedger模式下 提交位置会丢失，所有在消费队列（逻辑偏移）里的物理位置可能会大于commitlog的实际最大偏移，这种情况不管
+             * 3. 通过消费队列计算reput 的偏移（从哪个位置开始reput消息生成消费队列和索引文件）
+             * 4. 在启动一个commitlog前，确保落后的消息被分发完成（在broker主从切换后更容易出现这种消息落后的情况，commitlog记录的消息还有没有reput到消费队列和索引文件）
              */
+            // commitlog目录下存在的最久的那个commitlog文件名，也就是物理偏移最小值了
             long maxPhysicalPosInLogicQueue = commitLog.getMinOffset();
+            // 这个for循环是为了从ConsumeQueue（逻辑消费队列）中计算出目前的已经reput的最大物理偏移
             for (ConcurrentMap<Integer, ConsumeQueue> maps : this.consumeQueueTable.values()) {
                 for (ConsumeQueue logic : maps.values()) {
                     if (logic.getMaxPhysicOffset() > maxPhysicalPosInLogicQueue) {
@@ -261,15 +270,15 @@ public class DefaultMessageStore implements MessageStore {
             }
             log.info("[SetReputOffset] maxPhysicalPosInLogicQueue={} clMinOffset={} clMaxOffset={} clConfirmedOffset={}",
                 maxPhysicalPosInLogicQueue, this.commitLog.getMinOffset(), this.commitLog.getMaxOffset(), this.commitLog.getConfirmOffset());
-            this.reputMessageService.setReputFromOffset(maxPhysicalPosInLogicQueue);
-            this.reputMessageService.start();
+            this.reputMessageService.setReputFromOffset(maxPhysicalPosInLogicQueue); // 设置逻辑队列里消息已经分发到哪个位置
+            this.reputMessageService.start(); // 消息分发服务运行，一个异步线程不停地在运行
 
             /**
              *  1. Finish dispatching the messages fall behind, then to start other services.
              *  2. DLedger committedPos may be missing, so here just require dispatchBehindBytes <= 0
              */
             while (true) {
-                if (dispatchBehindBytes() <= 0) {
+                if (dispatchBehindBytes() <= 0) { // commitlog的最大位置竟然小于逻辑队列里的偏移，等他们分发位置跟上来，再继续后面的代码运行
                     break;
                 }
                 Thread.sleep(1000);
@@ -279,16 +288,16 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         if (!messageStoreConfig.isEnableDLegerCommitLog()) {
-            this.haService.start();
-            this.handleScheduleMessageService(messageStoreConfig.getBrokerRole());
+            this.haService.start(); //主从同步
+            this.handleScheduleMessageService(messageStoreConfig.getBrokerRole()); //延时消息处理
         }
 
-        this.flushConsumeQueueService.start();
-        this.commitLog.start();
-        this.storeStatsService.start();
+        this.flushConsumeQueueService.start(); //定时刷盘，将消费队列的数据刷到文件中
+        this.commitLog.start(); // commitlog服务，定时刷数据等相关操作
+        this.storeStatsService.start(); // 数据存储相关指标采集、统计、打印等操作
 
-        this.createTempFile();
-        this.addScheduleTask();
+        this.createTempFile(); // 创建abort文件
+        this.addScheduleTask(); // 开启一些定时任务
         this.shutdown = false;
     }
 
@@ -1297,12 +1306,13 @@ public class DefaultMessageStore implements MessageStore {
         String fileName = StorePathConfigHelper.getAbortFile(this.messageStoreConfig.getStorePathRootDir());
         File file = new File(fileName);
         MappedFile.ensureDirOK(file.getParent());
-        boolean result = file.createNewFile();
+        boolean result = file.createNewFile();  // 不存在是true，存在是false
         log.info(fileName + (result ? " create OK" : " already exists"));
     }
 
     private void addScheduleTask() {
 
+        // 定时删除过期文件：commitlog和consumer queue
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
             @Override
             public void run() {
@@ -1310,6 +1320,7 @@ public class DefaultMessageStore implements MessageStore {
             }
         }, 1000 * 60, this.messageStoreConfig.getCleanResourceInterval(), TimeUnit.MILLISECONDS);
 
+        // commitlog和consume queue和数据自检，比如commit log通过当前文件起始偏移，和前一个文件偏移来判断数据是否受损，如果其差值不是指定的MappedFileSize，肯定不对呀
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
             @Override
             public void run() {
@@ -1320,7 +1331,7 @@ public class DefaultMessageStore implements MessageStore {
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
             @Override
             public void run() {
-                if (DefaultMessageStore.this.getMessageStoreConfig().isDebugLockEnable()) {
+                if (DefaultMessageStore.this.getMessageStoreConfig().isDebugLockEnable()) { //默认是不启用的，这还定时打印线程栈~~~
                     try {
                         if (DefaultMessageStore.this.commitLog.getBeginTimeInLock() != 0) {
                             long lockTime = System.currentTimeMillis() - DefaultMessageStore.this.commitLog.getBeginTimeInLock();
@@ -1344,6 +1355,7 @@ public class DefaultMessageStore implements MessageStore {
         // DefaultMessageStore.this.cleanExpiredConsumerQueue();
         // }
         // }, 1, 1, TimeUnit.HOURS);
+        // 检查磁盘空间是不是快满了，也就是commitlog所在分区的空间使用率，默认达到90%就认为满了，这里只是检查并打印相关日志
         this.diskCheckScheduledExecutorService.scheduleAtFixedRate(new Runnable() {
             public void run() {
                 DefaultMessageStore.this.cleanCommitLogService.isSpaceFull();
@@ -1920,35 +1932,39 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         private void doReput() {
+            // 逻辑队列的最大偏移小于当前commitlog的最小偏移，说明消息滞后太多，只能从commitlog最小偏移开始，中间那部分消息肯定都没了，不过也不重要了，因为commitlog都没了
             if (this.reputFromOffset < DefaultMessageStore.this.commitLog.getMinOffset()) {
                 log.warn("The reputFromOffset={} is smaller than minPyOffset={}, this usually indicate that the dispatch behind too much and the commitlog has expired.",
                     this.reputFromOffset, DefaultMessageStore.this.commitLog.getMinOffset());
                 this.reputFromOffset = DefaultMessageStore.this.commitLog.getMinOffset();
             }
-            for (boolean doNext = true; this.isCommitLogAvailable() && doNext; ) {
+            for (boolean doNext = true; this.isCommitLogAvailable() && doNext; ) {   // this.reputFromOffset < DefaultMessageStore.this.commitLog.getMaxOffset()
 
-                if (DefaultMessageStore.this.getMessageStoreConfig().isDuplicationEnable()
+                if (DefaultMessageStore.this.getMessageStoreConfig().isDuplicationEnable() // 是否允许重复复制，默认false
                     && this.reputFromOffset >= DefaultMessageStore.this.getConfirmOffset()) {
                     break;
                 }
 
+                // 根据reputFromOffset找到对应的MappedFile，并返回对应的尚未分发的数据
                 SelectMappedBufferResult result = DefaultMessageStore.this.commitLog.getData(reputFromOffset);
                 if (result != null) {
                     try {
-                        this.reputFromOffset = result.getStartOffset();
+                        this.reputFromOffset = result.getStartOffset(); // 这里重新赋值是因为，可能reputFromOffset太小的，逻辑队列滞后太多，commitlog里之前的那部分数据已经清，从当前最小物理位置开始
 
-                        for (int readSize = 0; readSize < result.getSize() && doNext; ) {
+                        for (int readSize = 0; readSize < result.getSize() && doNext; ) { // 依次读取每条消息请求分发
                             DispatchRequest dispatchRequest =
                                 DefaultMessageStore.this.commitLog.checkMessageAndReturnSize(result.getByteBuffer(), false, false);
                             int size = dispatchRequest.getBufferSize() == -1 ? dispatchRequest.getMsgSize() : dispatchRequest.getBufferSize();
 
                             if (dispatchRequest.isSuccess()) {
                                 if (size > 0) {
+                                    // 分发消息，构建到消费队列和索引里
                                     DefaultMessageStore.this.doDispatch(dispatchRequest);
 
                                     if (BrokerRole.SLAVE != DefaultMessageStore.this.getMessageStoreConfig().getBrokerRole()
-                                            && DefaultMessageStore.this.brokerConfig.isLongPollingEnable()
-                                            && DefaultMessageStore.this.messageArrivingListener != null) {
+                                            && DefaultMessageStore.this.brokerConfig.isLongPollingEnable()  // 默认true： isLongPollingEnable
+                                            && DefaultMessageStore.this.messageArrivingListener != null) { // NotifyMessageArrivingListener: messageArrivingListener
+                                        // 这个操作只是通知拉取线程，消息已经归档，可以拉取消费了
                                         DefaultMessageStore.this.messageArrivingListener.arriving(dispatchRequest.getTopic(),
                                             dispatchRequest.getQueueId(), dispatchRequest.getConsumeQueueOffset() + 1,
                                             dispatchRequest.getTagsCode(), dispatchRequest.getStoreTimestamp(),

@@ -399,12 +399,12 @@ public class MappedFile extends ReferenceResource {
     }
 
     public SelectMappedBufferResult selectMappedBuffer(int pos) {
-        int readPosition = getReadPosition();
+        int readPosition = getReadPosition(); //The max position which have valid data, such as: commit pos
         if (pos < readPosition && pos >= 0) {
             if (this.hold()) {
                 ByteBuffer byteBuffer = this.mappedByteBuffer.slice();
-                byteBuffer.position(pos);
-                int size = readPosition - pos;
+                byteBuffer.position(pos); // 设置读写位置从pos开始
+                int size = readPosition - pos; //还未读取到的大小
                 ByteBuffer byteBufferNew = byteBuffer.slice();
                 byteBufferNew.limit(size);
                 return new SelectMappedBufferResult(this.fileFromOffset + pos, byteBufferNew, size, this);
