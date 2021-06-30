@@ -159,6 +159,7 @@ public class CommitLog {
             return result;
         }
 
+        // 如果offset 超过最大readPosition可能就返回Null了
         return null;
     }
 
@@ -188,9 +189,10 @@ public class CommitLog {
                 // Come the end of the file, switch to the next file Since the
                 // return 0 representatives met last hole,
                 // this can not be included in truncate offset
+                // size == 0说明到了文件尾部，该处理下一个文件了，每个文件的大小是固定的，但是内容尾部是不固定的，因为每条消息长短不一样，不一定刚好不长不短都装满到这个文件里
                 else if (dispatchRequest.isSuccess() && size == 0) {
                     index++;
-                    if (index >= mappedFiles.size()) {
+                    if (index >= mappedFiles.size()) { // 正常情况不会发生这样，index == mapped file的数量，因为一个文件快结束的时候就会生成一个新的，不会出现这种情况
                         // Current branch can not happen
                         log.info("recover last 3 physics file over, last mapped file " + mappedFile.getFileName());
                         break;
@@ -254,7 +256,7 @@ public class CommitLog {
             switch (magicCode) {
                 case MESSAGE_MAGIC_CODE:
                     break;
-                case BLANK_MAGIC_CODE:
+                case BLANK_MAGIC_CODE:// 这个是魔数是文件尾部的标志
                     return new DispatchRequest(0, true /* success */);
                 default:
                     log.warn("found a illegal magic code 0x" + Integer.toHexString(magicCode));

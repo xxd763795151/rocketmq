@@ -144,6 +144,7 @@ public class MappedFileQueue {
         }
     }
 
+    // 装载指定目录下的所有文件，并进行初始化（mmap映射）
     public boolean load() {
         File dir = new File(this.storePath);
         File[] files = dir.listFiles();
