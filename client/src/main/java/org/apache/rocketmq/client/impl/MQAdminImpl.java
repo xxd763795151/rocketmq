@@ -277,6 +277,7 @@ public class MQAdminImpl {
     public MessageExt queryMessageByUniqKey(String topic,
         String uniqKey) throws InterruptedException, MQClientException {
 
+        // 查询这个时间段，该消息的key是MsgID的消息，第一条即是，客户端ID是唯一的，所以基本不会重复，这里的返回值，消息已经被反序列化了
         QueryResult qr = this.queryMessage(topic, uniqKey, 32,
             MessageClientIDSetter.getNearlyTimeFromID(uniqKey).getTime() - 1000, Long.MAX_VALUE, true);
         if (qr != null && qr.getMessageList() != null && qr.getMessageList().size() > 0) {

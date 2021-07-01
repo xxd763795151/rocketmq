@@ -312,15 +312,21 @@ public class DefaultMQAdminExtImpl implements MQAdminExt, MQAdminExtInner {
         return this.mqClientInstance.getMQClientAPIImpl().getTopicRouteInfoFromNameServer(topic, timeoutMillis);
     }
 
+    /**
+     * 查询消息
+     * @param msgId 客户端msgId或服务端返回的MsgId
+     * @return
+     */
     @Override
     public MessageExt viewMessage(String topic,
         String msgId) throws RemotingException, MQBrokerException, InterruptedException, MQClientException {
         try {
-            MessageDecoder.decodeMessageId(msgId);
+            MessageDecoder.decodeMessageId(msgId);//服务端返回 的msgId，里面包含的有broker和队列、偏移等信息，直接查
             return this.viewMessage(msgId);
         } catch (Exception e) {
             log.warn("the msgId maybe created by new client. msgId={}", msgId, e);
         }
+        // 走到这里，说明就是客户端生成。按key和时间去查吧
         return this.mqClientInstance.getMQAdminImpl().queryMessageByUniqKey(topic, msgId);
     }
 

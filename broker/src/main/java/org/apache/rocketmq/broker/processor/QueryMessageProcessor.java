@@ -80,7 +80,7 @@ public class QueryMessageProcessor extends AsyncNettyRequestProcessor implements
 
         response.setOpaque(request.getOpaque());
 
-        String isUniqueKey = request.getExtFields().get(MixAll.UNIQUE_MSG_QUERY_FLAG);
+        String isUniqueKey = request.getExtFields().get(MixAll.UNIQUE_MSG_QUERY_FLAG);//说明是根据客户端生成的唯一ID来查的
         if (isUniqueKey != null && isUniqueKey.equals("true")) {
             requestHeader.setMaxNum(this.brokerController.getMessageStoreConfig().getDefaultQueryMaxNum());
         }

@@ -83,7 +83,7 @@ public class MessageClientIDSetter {
             cal.add(Calendar.MONTH, -1);
             monStartTime = cal.getTimeInMillis();
         }
-        cal.setTimeInMillis(monStartTime + spanMS);
+        cal.setTimeInMillis(monStartTime + spanMS);//这种算法是从来不认为消息的存放能超过1个月么？？？
         return cal.getTime();
     }
 

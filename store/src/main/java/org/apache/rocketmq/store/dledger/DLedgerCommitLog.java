@@ -337,9 +337,9 @@ public class DLedgerCommitLog extends CommitLog {
         try {
             int bodyOffset = DLedgerEntry.BODY_OFFSET;
             int pos = byteBuffer.position();
-            int magic = byteBuffer.getInt();
+            int magic = byteBuffer.getInt();//这个字段是total size 才对
             //In dledger, this field is size, it must be gt 0, so it could prevent collision
-            int magicOld = byteBuffer.getInt();
+            int magicOld = byteBuffer.getInt();//dledger，这个字段是魔数，小于0，如果表示大小，必须大于0
             if (magicOld == CommitLog.BLANK_MAGIC_CODE || magicOld == CommitLog.MESSAGE_MAGIC_CODE) {
                 byteBuffer.position(pos);
                 return super.checkMessageAndReturnSize(byteBuffer, checkCRC, readBody);
@@ -347,7 +347,7 @@ public class DLedgerCommitLog extends CommitLog {
             if (magic == MmapFileList.BLANK_MAGIC_CODE) {
                 return new DispatchRequest(0, true);
             }
-            byteBuffer.position(pos + bodyOffset);
+            byteBuffer.position(pos + bodyOffset);//dledger竟然还有个body offset占了一段地方
             DispatchRequest dispatchRequest = super.checkMessageAndReturnSize(byteBuffer, checkCRC, readBody);
             if (dispatchRequest.isSuccess()) {
                 dispatchRequest.setBufferSize(dispatchRequest.getMsgSize() + bodyOffset);
