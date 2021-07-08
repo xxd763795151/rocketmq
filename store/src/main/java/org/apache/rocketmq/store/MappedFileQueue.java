@@ -194,20 +194,22 @@ public class MappedFileQueue {
 
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
         long createOffset = -1;
+        // 从mapped file列表中返回最后一个mmap file
         MappedFile mappedFileLast = getLastMappedFile();
 
         if (mappedFileLast == null) {
             createOffset = startOffset - (startOffset % this.mappedFileSize);
         }
 
-        if (mappedFileLast != null && mappedFileLast.isFull()) {
+        if (mappedFileLast != null && mappedFileLast.isFull()) {//写入位置到mapped file的size即为full，最后一条消息写不了下，也会填充其它数据把它填满
             createOffset = mappedFileLast.getFileFromOffset() + this.mappedFileSize;
         }
+        // 以上两步都是计算出新建mmap file的时候，起始偏移值是多少（文件名）
 
         if (createOffset != -1 && needCreate) {
-            String nextFilePath = this.storePath + File.separator + UtilAll.offset2FileName(createOffset);
+            String nextFilePath = this.storePath + File.separator + UtilAll.offset2FileName(createOffset);//以当前偏移值计算新建的下个文件名
             String nextNextFilePath = this.storePath + File.separator
-                + UtilAll.offset2FileName(createOffset + this.mappedFileSize);
+                + UtilAll.offset2FileName(createOffset + this.mappedFileSize);//下下个文件
             MappedFile mappedFile = null;
 
             if (this.allocateMappedFileService != null) {

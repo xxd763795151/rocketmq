@@ -42,7 +42,7 @@ public abstract class ReferenceResource {
 
     public void shutdown(final long intervalForcibly) {
         if (this.available) {
-            this.available = false;
+            this.available = false;// 只有shutdown才会导致 available的值为false
             this.firstShutdownTimestamp = System.currentTimeMillis();
             this.release();
         } else if (this.getRefCount() > 0) {
